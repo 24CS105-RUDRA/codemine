@@ -4,35 +4,47 @@ import { config } from "../config";
 import { AuthUser, AuthRequest, JwtPayload } from "../types";
 import prisma from "./prisma";
 
-export function authenticate(req: AuthRequest, res: Response, next: NextFunction) {
+export async function authenticate(req: AuthRequest, res: Response, next: NextFunction) {
   const authHeader = req.headers.authorization;
   const token = authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : null;
 
-  if (!token) {
-    return res.status(401).json({ success: false, error: "Authentication required" });
+  if (token) {
+    try {
+      const decoded = jwt.verify(token, config.jwt.secret) as JwtPayload;
+
+      if (decoded.type === "access") {
+        req.user = {
+          id: decoded.sub,
+          email: decoded.email,
+          name: decoded.name,
+          role: decoded.role,
+        };
+        return next();
+      }
+    } catch (error) {
+      // Ignore token verification errors and fall back to default user
+    }
   }
 
+  // Fallback: auto-login default seed user
   try {
-    const decoded = jwt.verify(token, config.jwt.secret) as JwtPayload;
-
-    if (decoded.type !== "access") {
-      return res.status(401).json({ success: false, error: "Invalid token type" });
+    const defaultUser = await prisma.user.findFirst({
+      where: { email: "alex@example.com" },
+    });
+    if (defaultUser) {
+      req.user = {
+        id: defaultUser.id,
+        email: defaultUser.email,
+        name: defaultUser.name,
+        role: defaultUser.role,
+      };
+      return next();
     }
-
-    req.user = {
-      id: decoded.sub,
-      email: decoded.email,
-      name: decoded.name,
-      role: decoded.role,
-    };
-
-    next();
-  } catch (error) {
-    if (error instanceof jwt.TokenExpiredError) {
-      return res.status(401).json({ success: false, error: "Token expired" });
-    }
-    return res.status(401).json({ success: false, error: "Invalid token" });
+  } catch (err) {
+    console.error("Auto login fallback failed:", err);
   }
+
+  return res.status(401).json({ success: false, error: "Authentication required" });
 }
 
 export function optionalAuth(req: AuthRequest, res: Response, next: NextFunction) {

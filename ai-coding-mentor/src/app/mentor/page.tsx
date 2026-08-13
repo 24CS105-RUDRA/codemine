@@ -48,13 +48,6 @@ export default function MentorPage() {
   
   const messagesEnd = useRef<HTMLDivElement>(null);
 
-  // Redirect if not logged in
-  useEffect(() => {
-    if (!authLoading && !user) {
-      router.push("/landing");
-    }
-  }, [user, authLoading, router]);
-
   // Fetch all conversations
   const fetchConversations = async () => {
     try {
