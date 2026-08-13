@@ -36,7 +36,7 @@ export default function FloatingAI() {
 
   // Load or create a "Quick Chat" conversation when opened and user is logged in
   useEffect(() => {
-    if (!open || !user || conversationId) return;
+    if (!open || conversationId) return;
 
     const initQuickChat = async () => {
       try {
@@ -76,21 +76,6 @@ export default function FloatingAI() {
     const userMsg: Message = { role: "user", content: userText };
     setMessages((prev) => [...prev, userMsg]);
     setSending(true);
-
-    if (!user) {
-      // Fallback for unauthenticated user
-      setTimeout(() => {
-        setMessages((prev) => [
-          ...prev,
-          {
-            role: "assistant",
-            content: "Please log in to chat with the AI Mentor using real-time LLM features.",
-          },
-        ]);
-        setSending(false);
-      }, 1000);
-      return;
-    }
 
     try {
       let currentConvId = conversationId;

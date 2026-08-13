@@ -64,10 +64,8 @@ export default function MentorPage() {
   };
 
   useEffect(() => {
-    if (user) {
-      fetchConversations();
-    }
-  }, [user]);
+    fetchConversations();
+  }, []);
 
   // Fetch messages for active conversation
   useEffect(() => {
