@@ -3,8 +3,9 @@
 import { useState, useRef, useEffect } from "react";
 import AppLayout from "@/components/navigation/AppLayout";
 import AIMessage from "@/components/ai/AIMessage";
-import CodeBlock from "@/components/ai/CodeBlock";
-import { conversations, mockMessages } from "@/data/conversations";
+import { api } from "@/lib/api/client";
+import { useAuth } from "@/lib/api/auth";
+import { useRouter } from "next/navigation";
 import {
   Plus,
   MessageSquare,
@@ -15,38 +16,174 @@ import {
   Code2,
   Search,
   MoreHorizontal,
+  Loader2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
+interface Message {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  code?: string | null;
+  language?: string | null;
+  createdAt?: string;
+}
+
+interface Conversation {
+  id: string;
+  title: string;
+  lastMessage: string;
+}
+
 export default function MentorPage() {
-  const [activeConv, setActiveConv] = useState("1");
-  const [messages, setMessages] = useState(mockMessages);
+  const { user, loading: authLoading } = useAuth();
+  const router = useRouter();
+  
+  const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [activeConv, setActiveConv] = useState<string | null>(null);
+  const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
+  const [loadingConv, setLoadingConv] = useState(false);
+  const [sending, setSending] = useState(false);
+  
   const messagesEnd = useRef<HTMLDivElement>(null);
 
+  // Redirect if not logged in
+  useEffect(() => {
+    if (!authLoading && !user) {
+      router.push("/landing");
+    }
+  }, [user, authLoading, router]);
+
+  // Fetch all conversations
+  const fetchConversations = async () => {
+    try {
+      const res = await api.get("/conversations");
+      if (res.success) {
+        setConversations(res.data);
+        if (res.data.length > 0 && !activeConv) {
+          setActiveConv(res.data[0].id);
+        }
+      }
+    } catch (err) {
+      console.error("Error fetching conversations:", err);
+    }
+  };
+
+  useEffect(() => {
+    if (user) {
+      fetchConversations();
+    }
+  }, [user]);
+
+  // Fetch messages for active conversation
+  useEffect(() => {
+    if (!activeConv) return;
+    const fetchMessages = async () => {
+      setLoadingConv(true);
+      try {
+        const res = await api.get(`/conversations/${activeConv}`);
+        if (res.success && res.data) {
+          setMessages(res.data.messages || []);
+        }
+      } catch (err) {
+        console.error("Error fetching messages:", err);
+      } finally {
+        setLoadingConv(false);
+      }
+    };
+    fetchMessages();
+  }, [activeConv]);
+
+  // Scroll to bottom when messages change
   useEffect(() => {
     messagesEnd.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  const handleSend = () => {
-    if (!input.trim()) return;
-    const userMsg = {
-      id: String(Date.now()),
-      role: "user" as const,
-      content: input,
-      timestamp: "now",
-    };
-    const aiMsg = {
-      id: String(Date.now() + 1),
-      role: "assistant" as const,
-      content: "That's a great question! Let me analyze this and provide you with a comprehensive explanation. Here's what you need to know:",
-      timestamp: "now",
-      code: `// Example solution\nfunction solve(arr) {\n  const map = new Map();\n  for (let i = 0; i < arr.length; i++) {\n    const complement = target - arr[i];\n    if (map.has(complement)) {\n      return [map.get(complement), i];\n    }\n    map.set(arr[i], i);\n  }\n  return [];\n}`,
-      language: "typescript",
-    };
-    setMessages((prev) => [...prev, userMsg, aiMsg]);
-    setInput("");
+  const handleCreateConversation = async () => {
+    try {
+      const res = await api.post("/conversations", { title: "New Conversation" });
+      if (res.success && res.data) {
+        setConversations((prev) => [res.data, ...prev]);
+        setActiveConv(res.data.id);
+        setMessages([]);
+      }
+    } catch (err) {
+      console.error("Error creating conversation:", err);
+    }
   };
+
+  const handleSend = async () => {
+    if (!input.trim() || sending) return;
+    
+    let currentConvId = activeConv;
+    
+    // Create a conversation first if there isn't one
+    if (!currentConvId) {
+      try {
+        const res = await api.post("/conversations", { title: input.slice(0, 30) });
+        if (res.success && res.data) {
+          currentConvId = res.data.id;
+          setActiveConv(currentConvId);
+          setConversations((prev) => [res.data, ...prev]);
+        } else {
+          return;
+        }
+      } catch (err) {
+        console.error("Error creating conversation on send:", err);
+        return;
+      }
+    }
+
+    const tempUserMsg: Message = {
+      id: String(Date.now()),
+      role: "user",
+      content: input,
+    };
+
+    setMessages((prev) => [...prev, tempUserMsg]);
+    setInput("");
+    setSending(true);
+
+    try {
+      const res = await api.post(`/conversations/${currentConvId}/messages`, {
+        content: tempUserMsg.content,
+      });
+
+      if (res.success && res.data) {
+        const { userMessage, assistantMessage } = res.data;
+        // Replace temp message with database message, and append assistant response
+        setMessages((prev) => [
+          ...prev.filter((m) => m.id !== tempUserMsg.id),
+          userMessage,
+          assistantMessage,
+        ]);
+        // Refresh conversations list to update titles/last message preview
+        fetchConversations();
+      }
+    } catch (err) {
+      console.error("Error sending message:", err);
+      // Add error notice message
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: String(Date.now() + 1),
+          role: "assistant",
+          content: "Sorry, I ran into an error getting the AI response. Please try again.",
+        },
+      ]);
+    } finally {
+      setSending(false);
+    }
+  };
+
+  if (authLoading) {
+    return (
+      <div className="flex h-screen items-center justify-center bg-[var(--color-surface)]">
+        <Loader2 className="h-8 w-8 animate-spin text-indigo-600" />
+      </div>
+    );
+  }
 
   return (
     <AppLayout>
@@ -54,7 +191,10 @@ export default function MentorPage() {
         {/* Sidebar */}
         <div className="hidden lg:flex w-72 flex-col border-r border-[var(--color-border)] bg-[var(--color-surface)]">
           <div className="p-4 border-b border-[var(--color-border)]">
-            <button className="w-full flex items-center justify-center gap-2 h-10 rounded-xl bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700 transition-colors">
+            <button
+              onClick={handleCreateConversation}
+              className="w-full flex items-center justify-center gap-2 h-10 rounded-xl bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700 transition-colors"
+            >
               <Plus size={16} /> New Conversation
             </button>
           </div>
@@ -74,7 +214,7 @@ export default function MentorPage() {
                 )}
               >
                 <p className="font-medium truncate">{conv.title}</p>
-                <p className="text-xs text-[var(--color-text-tertiary)] truncate mt-0.5">{conv.lastMessage}</p>
+                <p className="text-xs text-[var(--color-text-tertiary)] truncate mt-0.5">{conv.lastMessage || "No messages yet"}</p>
               </button>
             ))}
           </div>
@@ -110,16 +250,38 @@ export default function MentorPage() {
 
           {/* Messages */}
           <div className="flex-1 overflow-y-auto scrollbar-thin p-6 space-y-6">
-            {messages.map((msg) => (
-              <AIMessage
-                key={msg.id}
-                role={msg.role}
-                content={msg.content}
-                code={msg.code}
-                language={msg.language}
-                showActions={msg.role === "assistant"}
-              />
-            ))}
+            {loadingConv ? (
+              <div className="flex h-full items-center justify-center">
+                <Loader2 className="h-6 w-6 animate-spin text-indigo-600" />
+              </div>
+            ) : messages.length === 0 ? (
+              <div className="flex h-full flex-col items-center justify-center text-center p-6">
+                <div className="w-12 h-12 rounded-2xl bg-indigo-500/10 text-indigo-600 flex items-center justify-center mb-3">
+                  <MessageSquare size={24} />
+                </div>
+                <h3 className="text-sm font-medium text-[var(--color-text-primary)]">Start a new conversation</h3>
+                <p className="text-xs text-[var(--color-text-tertiary)] mt-1 max-w-sm">
+                  Ask your AI coding mentor anything about programming, code review, debugging, or technical concepts.
+                </p>
+              </div>
+            ) : (
+              messages.map((msg) => (
+                <AIMessage
+                  key={msg.id}
+                  role={msg.role}
+                  content={msg.content}
+                  code={msg.code || undefined}
+                  language={msg.language || undefined}
+                  showActions={msg.role === "assistant"}
+                />
+              ))
+            )}
+            {sending && (
+              <div className="flex items-center gap-2 text-xs text-[var(--color-text-tertiary)]">
+                <Loader2 className="h-3 w-3 animate-spin text-indigo-600" />
+                <span>AI Mentor is thinking...</span>
+              </div>
+            )}
             <div ref={messagesEnd} />
           </div>
 
@@ -137,15 +299,17 @@ export default function MentorPage() {
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && handleSend()}
-                placeholder="Ask your AI mentor anything..."
-                className="flex-1 bg-transparent text-sm text-[var(--color-text-primary)] placeholder-[var(--color-text-tertiary)] outline-none"
+                disabled={sending}
+                placeholder={sending ? "Waiting for response..." : "Ask your AI mentor anything..."}
+                className="flex-1 bg-transparent text-sm text-[var(--color-text-primary)] placeholder-[var(--color-text-tertiary)] outline-none disabled:opacity-50"
               />
               <button className="p-1.5 rounded-lg hover:bg-[var(--color-surface-tertiary)] text-[var(--color-text-tertiary)]">
                 <Mic size={16} />
               </button>
               <button
                 onClick={handleSend}
-                className="p-2 rounded-xl bg-indigo-600 text-white hover:bg-indigo-700 transition-colors"
+                disabled={sending}
+                className="p-2 rounded-xl bg-indigo-600 text-white hover:bg-indigo-700 transition-colors disabled:opacity-50"
               >
                 <Send size={16} />
               </button>
