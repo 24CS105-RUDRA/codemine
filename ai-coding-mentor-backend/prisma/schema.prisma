@@ -1,0 +1,294 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Auth & Users ───────────────────────────────────────────
+
+model User {
+  id            String    @id @default(uuid())
+  email         String    @unique
+  name          String
+  password      String
+  avatar        String?
+  role          String    @default("student")
+  learningGoal  String?
+  preferredLang String    @default("JavaScript")
+  dailyGoal     Int       @default(30)
+  theme         String    @default("system")
+
+  // AI Preferences
+  aiResponseStyle      String @default("balanced")
+  aiExplanationLevel   String @default("intermediate")
+  aiMentorPersonality  String @default("friendly")
+
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  // Relations
+  profile             UserProfile?
+  conversations       Conversation[]
+  messages            Message[]
+  documents           Document[]
+  challengeAttempts   ChallengeAttempt[]
+  learningProgress    LearningProgress[]
+  notifications       Notification[]
+  activityLog         ActivityLog[]
+  refreshTokens       RefreshToken[]
+  sessions            Session[]
+}
+
+model RefreshToken {
+  id        String   @id @default(uuid())
+  token     String   @unique
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+}
+
+model Session {
+  id           String   @id @default(uuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  token        String   @unique
+  userAgent    String?
+  ipAddress    String?
+  lastActiveAt DateTime @default(now())
+  createdAt    DateTime @default(now())
+
+  @@index([userId])
+}
+
+// ─── User Profile & Progress ────────────────────────────────
+
+model UserProfile {
+  id            String   @id @default(uuid())
+  userId        String   @unique
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  currentStreak Int      @default(0)
+  maxStreak     Int      @default(0)
+  totalSolved   Int      @default(0)
+  accuracy      Float    @default(0)
+  totalHours    Float    @default(0)
+  level         String   @default("Beginner")
+  xp            Int      @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model LearningProgress {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  topic     String
+  score     Float    @default(0)
+  level     String   @default("Beginner")
+  problemsSolved Int @default(0)
+  lastPracticed  DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, topic])
+  @@index([userId])
+}
+
+// ─── Conversations & Messages ───────────────────────────────
+
+model Conversation {
+  id          String   @id @default(uuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title       String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  messages    Message[]
+
+  @@index([userId])
+  @@index([updatedAt])
+}
+
+model Message {
+  id             String       @id @default(uuid())
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  userId         String?
+  user           User?        @relation(fields: [userId], references: [id], onDelete: SetNull)
+  role           String       // "user" | "assistant" | "system"
+  content        String
+  code           String?
+  language       String?
+  tokenCount     Int?
+  createdAt      DateTime     @default(now())
+
+  @@index([conversationId])
+  @@index([createdAt])
+}
+
+// ─── Challenges ─────────────────────────────────────────────
+
+model Challenge {
+  id            String   @id @default(uuid())
+  title         String
+  slug          String   @unique
+  description   String
+  difficulty    String   // "Easy" | "Medium" | "Hard"
+  topic         String
+  category      String
+  estimatedTime Int      // minutes
+  starterCode   String?
+  solutionCode  String?
+  testCases     String   @default("[]") // JSON string
+  constraints   String   @default("[]") // JSON string
+  hints         String   @default("[]") // JSON string
+  examples      String   @default("[]") // JSON string
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  attempts      ChallengeAttempt[]
+
+  @@index([difficulty])
+  @@index([category])
+  @@index([topic])
+}
+
+model ChallengeAttempt {
+  id          String    @id @default(uuid())
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  challengeId String
+  challenge   Challenge @relation(fields: [challengeId], references: [id], onDelete: Cascade)
+  code        String
+  language    String    @default("javascript")
+  status      String    @default("pending")
+  output      String?
+  error       String?
+  runtime     Int?
+  memory      Int?
+  score       Float?
+  completed   Boolean   @default(false)
+  attempts    Int       @default(1)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, challengeId])
+  @@index([userId])
+  @@index([challengeId])
+}
+
+// ─── Documents ──────────────────────────────────────────────
+
+model Document {
+  id           String   @id @default(uuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name         String
+  originalName String
+  type         String
+  mimeType     String
+  size         Int
+  path         String
+  status       String   @default("processing")
+  summary      String?
+  topics       String   @default("[]") // JSON string
+  content      String?
+  metadata     String?  // JSON string
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@index([type])
+}
+
+// ─── Notifications ──────────────────────────────────────────
+
+model Notification {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      String
+  title     String
+  message   String
+  read      Boolean  @default(false)
+  actionUrl String?
+
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([createdAt])
+}
+
+// ─── Activity Log ───────────────────────────────────────────
+
+model ActivityLog {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      String
+  title     String
+  description String?
+  metadata  String?  // JSON string
+
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([createdAt])
+}
+
+// ─── Learning Path ──────────────────────────────────────────
+
+model LearningModule {
+  id            String   @id @default(uuid())
+  title         String
+  description   String
+  difficulty    String
+  estimatedTime Int
+  level         Int
+  sortOrder     Int
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  lessons Lesson[]
+}
+
+model Lesson {
+  id         String        @id @default(uuid())
+  moduleId   String
+  module     LearningModule @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+  title      String
+  sortOrder  Int
+
+  createdAt DateTime @default(now())
+}
+
+// ─── Recommendations ────────────────────────────────────────
+
+model Recommendation {
+  id           String   @id @default(uuid())
+  userId       String
+  title        String
+  reason       String
+  difficulty   String
+  estimatedTime Int
+  topic        String
+  type         String
+  progress     Int      @default(0)
+  completed    Boolean  @default(false)
+
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+}
